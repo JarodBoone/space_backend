@@ -33,6 +33,14 @@
 #define FRAME_SIZE 0.025 // Frame size in seconds
 #define FRAME_STEP 0.010 // Frame step size in seconds 
 
+// Conversion macros between mels and frequencies
+#define FREQ_TO_MEL(f) 1125 * log(1 + (double) f/700)
+#define MEL_TO_FREQ(m) 700*(cexp((m/1125)) - 1)
+
+#define STD_MIN_F 300 // standard frequency lower bound  
+#define STD_MAX_F 8000 // standard frequency upper bound 
+#define STD_FB_SIZE 26 // standard filterbank size
+
 // Wave file header struct I found online https://en.wikipedia.org/wiki/WAV
 typedef struct WAV_HEADER { 
     unsigned char riff[FMT_STR_SIZE];                      	// RIFF str (4 bytes)

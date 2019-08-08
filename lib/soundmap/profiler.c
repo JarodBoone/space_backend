@@ -210,6 +210,53 @@ int gen_sgram_16(wav_file_t *input,complex_t **output) {
     return 0; 
 }
 
+/**
+ * Generate mel filter banks given the input parameters. Returns a matrix of filters of the 
+ * form int[num_filters][filter_size]
+ * 
+ * @params (num_filters) the number of filters you want to generate 
+ * @params (filter_size) the number of periodogram coefficients that will be filtered by these 
+ * @params (min_f) the minimum frequency 
+ * @params (max_f) the maximum frequency 
+ * @params (sample_rate) the sample rate of the signal we are building the filter banks for 
+ * 
+ */
+float **generate_filter_bank(size_t num_filters,size_t filter_size,uint32_t min_f, 
+    uint32_t max_f,uint32_t sample_rate, float** out) { 
+
+    double min_mel = FREQ_TO_MEL(min_f); 
+    printf("min mel %f\n",min_mel); 
+
+    double max_mel = FREQ_TO_MEL(max_f);
+    printf("max mel %f\n", max_mel);
+
+    assert(min_mel < max_mel); 
+
+    double step_size = (max_mel - min_mel)/(num_filters + 1); 
+
+    double mel_vector[num_filters + 2]; 
+    int bin_vector[num_filters + 2]; 
+
+    for (int i = 0; i < num_filters + 2; i++) {
+        mel_vector[i] = min_mel + (i * step_size); 
+        mel_vector[i] = MEL_TO_FREQ(mel_vector[i]); 
+        bin_vector[i] = floor((filter_size + 1) * mel_vector[i]/sample_rate);
+        printf("%f\n",mel_vector[i]); 
+        printf("To bin %d\n",bin_vector[i]); 
+
+    }
+
+    for (int i = 0; i < num_filters; i++) { 
+        int fn = i + 1;
+        for (int ii = 0; ii < filter_size; ii++) { 
+            if (ii <  bin_vector[fn - 1]) out[i][ii] = 0; 
+            else if (ii < bin_vector[fn]) out[i][ii] = (ii - bin_vector[fn -1])/(bin_vector[fn] - bin_vector[fn - 1]); 
+            else if (ii < bin_vector[fn + 1]) out[i][ii] = (bin_vector[fn + 1] - ii)/(bin_vector[fn + 1] - bin_vector[fn]); 
+            else out[i][ii] = 0; 
+        }
+    }
+}
+
 // generate a feature hash for the given wav file 
 int feature_print(wav_file_t *input, char *out) {
 
@@ -222,10 +269,12 @@ int feature_print(wav_file_t *input, char *out) {
     printf("Samples per frame %u\n",samples_per_frame);
     samples_per_frame = ALIGN_2(samples_per_frame); // align to a power of 2 so number of samples in frame can be fft 
 
+    uint32_t sig_samples_per_frame = samples_per_frame/2; // Only first half of the fourier coefficients are relevant
+
     assert(!(input->header.sample_rate % (uint32_t) (1/FRAME_STEP))); // make sure sample rate splits into steps
     uint32_t samples_per_step = FRAME_STEP * input->header.sample_rate; 
     printf("Samples per step %u\n",samples_per_step);
-    assert(samples_per_frame >= samples_per_step); 
+    assert(samples_per_frame >= samples_per_step); // make sure the frame size is greater than the step size 
 
     // the size of the sample array is the total chunk size divided by the data sample length
     size_t num_samples = input->header.chunk_size / input->header.sample_size; // number of samples available 
@@ -246,17 +295,13 @@ int feature_print(wav_file_t *input, char *out) {
         return -1;
     }
 
-    printf("Copying wav data \n");
-
     memset((void *) sample_arr,0,num_samples_to_frame * input->header.sample_size); // zero padding 
     memcpy((void *) sample_arr,input->data,input->header.chunk_size); // copy the data 
 
     // need the number of frames to be even for the algorithm to work 
     size_t num_frames = num_steps % 2 ? num_steps + 1 : num_steps; // size of frame array in frames 
-
     size_t bytes_per_step = samples_per_step * input->header.sample_size; // step size in bytes 
 
-    printf("Need size of %d not %d\n",sizeof(char),sizeof(complex_t *));
 
     // Need to dynamically allocate the frame matrix or else we blow the stack
     complex_t **frames = (complex_t **) malloc(num_frames * sizeof(complex_t*));
@@ -279,12 +324,20 @@ int feature_print(wav_file_t *input, char *out) {
         }
     }
 
-    printf("generating feature print for %s\n", input->name);
-    printf("data size of %u\n", (unsigned)num_samples);
-    printf("sample rate of %u Hz\n",input->header.sample_rate);
-    printf("Num Steps %u\n",num_steps);
-    printf("Num Frames %u\n",num_frames);
-    printf("Samples to frame %u\n",num_samples_to_frame);
+    // printf("generating feature print for %s\n", input->name);
+    // printf("data size of %u\n", (unsigned)num_samples);
+    // printf("sample rate of %u Hz\n",input->header.sample_rate);
+    // printf("Num Steps %u\n",num_steps);
+    // printf("Num Frames %u\n",num_frames);
+    // printf("Samples to frame %u\n",num_samples_to_frame);
+
+    // Generate filter bank
+    float **filter_bank = malloc(sizeof(float *) * STD_FB_SIZE); 
+    for (int i = 0; i < STD_FB_SIZE; i++){ 
+        filter_bank[i] = malloc(sizeof(float) * sig_samples_per_frame); 
+    }
+    generate_filter_bank(STD_FB_SIZE,sig_samples_per_frame,STD_MIN_F,STD_MAX_F,
+        input->header.sample_rate,filter_bank);
 
     for (int i = 0; i < num_steps; i++) {
         // increment the data pointer by frame step size 
@@ -298,10 +351,11 @@ int feature_print(wav_file_t *input, char *out) {
             frames[i][ii] = frames[i][ii] + 1;
         }
 
-
         // In place fast fourier transform 
         fft(frames[i],samples_per_frame); 
-    
+
+        // Turn the first (samples_per_frame/2) fourier coefficients into periodogram coefficients 
+        pg_estimate(frames[i],sig_samples_per_frame); 
     }
 
     free(sample_arr); 
@@ -309,6 +363,11 @@ int feature_print(wav_file_t *input, char *out) {
         free(frames[i]);
     }
     free(frames);
+
+    for (int i = 0; i < STD_FB_SIZE; i++) { 
+        free(filter_bank[i]); 
+    }
+    free(filter_bank); 
     
 
 

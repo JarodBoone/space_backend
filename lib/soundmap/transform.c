@@ -18,7 +18,15 @@ void fft_recursive_step(complex_t input[], complex_t buffer[], int buffer_size, 
 	}
 }
  
-// performs an in place fast fourier transform of size buffer_size 
+/**
+ * In place fast fourier transform. Assumes that buffer_size is a power of 2
+ * Note that only the first buffer_size/2 frequencies will be relevant the rest 
+ * will be inverse. 
+ *
+ * @params (input) a complex_t array of (buffer_size)
+ * @params (buffer_size) the size of the buffer to transform
+ * 
+ */ 
 void fft(complex_t input[], int buffer_size) {
 	complex_t buffer[buffer_size];
 
@@ -26,4 +34,15 @@ void fft(complex_t input[], int buffer_size) {
 	for (int i = 0; i < buffer_size; i++) buffer[i] = input[i];
  
 	fft_recursive_step(input, buffer, buffer_size, 1);
+}
+
+/**
+ * In place periodogram estimate of a signal. This is simply taking the complex conjugate of the 
+ * fourier transform and dividing by the size of the transform. Using welch's method 
+ * https://en.wikipedia.org/wiki/Welch%27s_method
+ * 
+ * Assume entirely real input array 
+ */
+void pg_estimate(complex_t input[], int buffer_size) {
+	for (int i = 0; i < buffer_size; i++) input[i] = (complex_t) (pow(creal(input[i]),2)/buffer_size); 
 }
